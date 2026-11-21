@@ -102,12 +102,16 @@ st.markdown(
 def get_default_api_key() -> str:
     """Retrieve API key from environment or Streamlit secrets (Groq or Gemini)."""
     key = os.getenv("GROQ_API_KEY") or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-    if not key and hasattr(st, "secrets"):
-        key = (
-            st.secrets.get("GROQ_API_KEY")
-            or st.secrets.get("GEMINI_API_KEY")
-            or st.secrets.get("GOOGLE_API_KEY")
-        )
+    if not key:
+        try:
+            if hasattr(st, "secrets"):
+                key = (
+                    st.secrets.get("GROQ_API_KEY")
+                    or st.secrets.get("GEMINI_API_KEY")
+                    or st.secrets.get("GOOGLE_API_KEY")
+                )
+        except Exception:
+            pass
     return key or ""
 
 
