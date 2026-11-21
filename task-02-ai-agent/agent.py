@@ -45,7 +45,7 @@ class ToolCallingAgent:
             model: Target Groq LLM model identifier.
             max_iterations: Maximum tool-execution iterations per turn to prevent infinite loops.
         """
-        self.api_key = api_key or os.getenv("GROQ_API_KEY")
+        self.api_key = api_key if api_key is not None else os.getenv("GROQ_API_KEY")
         self.model = model
         self.max_iterations = max_iterations
         self.system_prompt = AGENT_SYSTEM_PROMPT
