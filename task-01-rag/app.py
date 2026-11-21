@@ -1,93 +1,97 @@
-"""Streamlit Web Interface for Ghanex Tech AI Document Assistant (RAG)."""
+"""Ghanex Tech AI Document Assistant - Streamlit Application.
+
+Production-ready RAG application integrating PDFProcessor, RAGEngine,
+and an interactive streaming conversational interface.
+"""
 
 import os
 import sys
 from pathlib import Path
-from typing import List
+from dotenv import load_dotenv
+import streamlit as st
 
-# Ensure task-01-rag directory is in sys.path
+# Load environment variables
+load_dotenv()
+
+# Add task directory to python path
 BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-import streamlit as st
-
-from config.settings import get_settings
-from src.embeddings.gemini_embeddings import GeminiEmbedder, GeminiAPIKeyError, GeminiEmbeddingError
-from src.generation.rag_engine import RAGEngine
-from src.ingestion.chunker import RecursiveTextChunker
-from src.ingestion.pdf_loader import (
-    PDFLoader,
-    PDFProcessingError,
+from pdf_processor import (
+    PDFProcessor,
     EncryptedPDFError,
     EmptyPDFError,
     ScannedPDFError,
     CorruptPDFError,
 )
-from src.utils.logger import get_logger
-from src.vectorstore.faiss_store import FAISSVectorStore
+from rag_engine import RAGEngine
 
-logger = get_logger("app")
-settings = get_settings()
-
-# Streamlit Page Setup
+# Page configuration
 st.set_page_config(
-    page_title="DocAssist RAG | Ghanex Tech",
+    page_title="Ghanex DocAssist RAG",
     page_icon="📄",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# Custom CSS for polished enterprise look
+# Custom Styling
 st.markdown(
     """
     <style>
     .main-header {
-        background: linear-gradient(135deg, #1E3A8A 0%, #3B82F6 100%);
-        padding: 24px;
-        border-radius: 12px;
+        background: linear-gradient(135deg, #0F172A 0%, #1E3A8A 50%, #2563EB 100%);
+        padding: 24px 28px;
+        border-radius: 14px;
         color: white;
-        margin-bottom: 20px;
+        margin-bottom: 24px;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
     }
     .main-header h1 {
         margin: 0;
         font-size: 2.2rem;
         font-weight: 700;
-        color: white;
+        color: #FFFFFF;
     }
     .main-header p {
         margin-top: 6px;
         margin-bottom: 0;
-        opacity: 0.9;
+        color: #E2E8F0;
         font-size: 1.05rem;
     }
-    .badge-pill {
-        display: inline-block;
-        padding: 3px 10px;
+    .status-badge-active {
+        background-color: #DEF7EC;
+        color: #03543F;
+        padding: 4px 10px;
         border-radius: 12px;
-        font-size: 0.8rem;
+        font-size: 0.85rem;
         font-weight: 600;
-        margin-right: 6px;
     }
-    .badge-green { background-color: #D1FAE5; color: #065F46; }
-    .badge-blue { background-color: #DBEAFE; color: #1E40AF; }
-    .badge-amber { background-color: #FEF3C7; color: #92400E; }
-    .citation-card {
+    .status-badge-inactive {
+        background-color: #FEECDC;
+        color: #9C4221;
+        padding: 4px 10px;
+        border-radius: 12px;
+        font-size: 0.85rem;
+        font-weight: 600;
+    }
+    .citation-box {
         background-color: #F8FAFC;
-        border-left: 4px solid #3B82F6;
-        padding: 12px 14px;
+        border-left: 4px solid #2563EB;
+        padding: 12px 16px;
         border-radius: 6px;
-        margin-bottom: 10px;
-        font-size: 0.9rem;
+        margin-bottom: 12px;
     }
-    .citation-meta {
-        font-weight: 600;
-        color: #1E40AF;
+    .citation-title {
+        font-weight: 700;
+        color: #1E3A8A;
+        font-size: 0.95rem;
         margin-bottom: 4px;
     }
-    .sample-pill-btn {
-        margin-right: 8px;
-        margin-bottom: 8px;
+    .citation-text {
+        font-size: 0.9rem;
+        color: #334155;
+        white-space: pre-wrap;
     }
     </style>
     """,
@@ -95,401 +99,277 @@ st.markdown(
 )
 
 
-def init_session_state():
-    """Initialize persistent Streamlit session states."""
-    if "vector_store" not in st.session_state:
-        st.session_state.vector_store = FAISSVectorStore(dimension=settings.embedding_dimension)
-    if "chat_history" not in st.session_state:
-        st.session_state.chat_history = []
-    if "loaded_files" not in st.session_state:
-        st.session_state.loaded_files = []  # List of dicts with file stats
-    if "api_key" not in st.session_state:
-        st.session_state.api_key = settings.get_api_key() or ""
+def get_default_api_key() -> str:
+    """Retrieve Gemini API key from environment or Streamlit secrets."""
+    key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    if not key and hasattr(st, "secrets"):
+        key = st.secrets.get("GEMINI_API_KEY") or st.secrets.get("GOOGLE_API_KEY")
+    return key or ""
 
 
-init_session_state()
+# Initialize session states
+if "rag_engine" not in st.session_state:
+    st.session_state.rag_engine = RAGEngine(api_key=get_default_api_key())
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
+if "indexed_files" not in st.session_state:
+    st.session_state.indexed_files = []
+if "api_key" not in st.session_state:
+    st.session_state.api_key = get_default_api_key()
 
 
-# ---------------- SIDEBAR CONFIGURATION ----------------
+# ---------------- SIDEBAR ----------------
 with st.sidebar:
-    st.markdown("### ⚙️ System Configuration")
+    st.markdown("## ⚙️ Document Assistant Controls")
 
     # API Key Input
-    api_key_status = bool(st.session_state.api_key)
-    if api_key_status:
+    has_api_key = bool(st.session_state.api_key)
+    if has_api_key:
         st.markdown(
-            '<span class="badge-pill badge-green">✓ Gemini API Key Active</span>',
+            '<span class="status-badge-active">● Gemini API Key Connected</span>',
             unsafe_allow_html=True,
         )
     else:
         st.markdown(
-            '<span class="badge-pill badge-amber">⚠ API Key Required</span>',
+            '<span class="status-badge-inactive">○ Gemini API Key Missing</span>',
             unsafe_allow_html=True,
         )
 
-    user_api_key = st.text_input(
+    user_key = st.text_input(
         "Google Gemini API Key",
         value=st.session_state.api_key,
         type="password",
-        placeholder="Enter AIzaSy...",
-        help="Reads automatically from .env or Streamlit secrets if configured.",
+        placeholder="Enter your AIzaSy... key",
+        help="Reads automatically from .env or Streamlit secrets if present.",
     )
-    if user_api_key != st.session_state.api_key:
-        st.session_state.api_key = user_api_key.strip()
+    if user_key != st.session_state.api_key:
+        st.session_state.api_key = user_key.strip()
+        st.session_state.rag_engine.set_api_key(user_key.strip())
         st.rerun()
 
     st.markdown("---")
 
-    # Model & Generation Parameters
-    st.markdown("### 🧠 Model Parameters")
-    selected_model = st.selectbox(
-        "LLM Model",
-        options=settings.available_llm_models,
-        index=0,
-        help="Select Gemini model family.",
+    # Multi-PDF File Uploader
+    st.markdown("### 📁 Upload Documents")
+    uploaded_files = st.file_uploader(
+        "Select PDF Document(s)",
+        type=["pdf"],
+        accept_multiple_files=True,
+        help="Upload one or multiple PDF files.",
     )
 
-    with st.expander("🛠️ Advanced RAG Hyperparameters", expanded=False):
-        top_k = st.slider(
-            "Top-K Retrieval",
-            min_value=1,
-            max_value=settings.max_top_k,
-            value=settings.default_top_k,
-            help="Number of context passages to inject into the LLM prompt.",
-        )
-        temperature = st.slider(
-            "Temperature",
-            min_value=0.0,
-            max_value=1.0,
-            value=settings.default_temperature,
-            step=0.05,
-            help="Lower values enforce deterministic, strictly grounded responses.",
-        )
-        chunk_size = st.slider(
-            "Chunk Size (characters)",
-            min_value=settings.min_chunk_size,
-            max_value=settings.max_chunk_size,
-            value=settings.default_chunk_size,
-            step=100,
-            help="Optimal size for semantic paragraph segmentation.",
-        )
-        chunk_overlap = st.slider(
-            "Chunk Overlap (characters)",
-            min_value=50,
-            max_value=min(400, chunk_size - 50),
-            value=min(settings.default_chunk_overlap, chunk_size - 50),
-            step=25,
-            help="Continuity buffer between adjacent text chunks.",
-        )
+    col1, col2 = st.columns(2)
+    with col1:
+        index_clicked = st.button("Index Documents", type="primary", use_container_width=True)
+    with col2:
+        clear_clicked = st.button("Clear / Reset", use_container_width=True)
 
-    st.markdown("---")
-
-    # Quick Demo Sample PDF Loader
-    st.markdown("### 🚀 Quick Demo")
+    # Built-in Sample Loader
     sample_pdf_path = BASE_DIR / "sample_docs" / "sample_policy.pdf"
     if sample_pdf_path.exists():
-        if st.button("📁 Load Built-in Sample PDF", use_container_width=True):
+        if st.button("🚀 Load Sample Handbook PDF", use_container_width=True):
             if not st.session_state.api_key:
                 st.error("Please enter a Google Gemini API Key first.")
             else:
-                with st.spinner("Indexing Ghanex Tech Engineering Handbook..."):
+                with st.spinner("Indexing sample policy PDF..."):
                     try:
-                        loader = PDFLoader()
-                        doc = loader.load_pdf(sample_pdf_path)
-                        chunker = RecursiveTextChunker(
-                            chunk_size=chunk_size, chunk_overlap=chunk_overlap
-                        )
-                        chunks = chunker.chunk_document(doc)
-
-                        embedder = GeminiEmbedder(
-                            api_key=st.session_state.api_key,
-                            model_name=settings.default_embedding_model,
-                        )
-                        texts = [c.text for c in chunks]
-                        embeddings = embedder.embed_texts(texts)
-
-                        # Reset store and populate
-                        st.session_state.vector_store.clear()
-                        st.session_state.vector_store.add_chunks(chunks, embeddings)
-                        st.session_state.loaded_files = [
-                            {
-                                "name": doc.source_name,
-                                "pages": doc.total_pages,
-                                "chars": doc.total_chars,
-                                "chunks": len(chunks),
-                            }
+                        processor = PDFProcessor()
+                        sample_docs = processor.extract_text_from_pdf(sample_pdf_path)
+                        st.session_state.rag_engine.clear_index()
+                        num_chunks = st.session_state.rag_engine.index_documents(sample_docs)
+                        st.session_state.indexed_files = [
+                            {"name": "sample_policy.pdf", "pages": len(sample_docs), "chunks": num_chunks}
                         ]
                         st.session_state.chat_history.append(
                             {
                                 "role": "assistant",
-                                "content": (
-                                    f"Loaded and indexed **{doc.source_name}** ({doc.total_pages} pages, "
-                                    f"{len(chunks)} chunks). Ask me anything about engineering architecture, "
-                                    "data governance, encryption standards, or incident SLAs!"
-                                ),
+                                "content": f"Loaded and indexed **sample_policy.pdf** ({len(sample_docs)} pages, {num_chunks} chunks). Ask me anything about engineering architecture, encryption standards, or incident SLAs!",
                                 "sources": [],
                             }
                         )
-                        st.success("Sample policy document indexed successfully!")
+                        st.success(f"Indexed {num_chunks} chunks from sample policy.")
                         st.rerun()
                     except Exception as e:
-                        st.error(f"Error indexing sample document: {e}")
+                        st.error(f"Failed to load sample PDF: {e}")
 
-    # Index Diagnostics
-    stats = st.session_state.vector_store.get_stats()
-    st.markdown("### 📊 Index Statistics")
-    st.markdown(
-        f"""
-        - **Total Documents:** `{stats['total_documents']}`
-        - **Indexed Chunks:** `{stats['total_chunks']}`
-        - **Total Pages:** `{stats['total_pages']}`
-        - **Embedding Dim:** `{stats['dimension']}`
-        """
-    )
+    # Handle indexing
+    if index_clicked:
+        if not uploaded_files:
+            st.warning("Please upload at least one PDF file.")
+        elif not st.session_state.api_key:
+            st.error("Gemini API Key is required. Please provide it above.")
+        else:
+            processor = PDFProcessor()
+            all_documents = []
+            successful_file_names = []
 
-    if st.button("🗑️ Clear Index & Reset Chat", use_container_width=True):
-        st.session_state.vector_store.clear()
+            # Process each file with graceful exception handling
+            for f in uploaded_files:
+                file_name = f.name
+                try:
+                    docs = processor.extract_text_from_pdf(f, source_name=file_name)
+                    all_documents.extend(docs)
+                    successful_file_names.append(
+                        {"name": file_name, "pages": len(docs), "chunks": 0}
+                    )
+                except EncryptedPDFError as e:
+                    st.error(f"🔒 **Password Protected:** {e}")
+                except EmptyPDFError as e:
+                    st.warning(f"⚠️ **Empty File:** {e}")
+                except ScannedPDFError as e:
+                    st.warning(f"🖼️ **Scanned / Image-Only PDF:** {e}")
+                except CorruptPDFError as e:
+                    st.error(f"❌ **Corrupted File:** {e}")
+                except Exception as e:
+                    st.error(f"Error processing '{file_name}': {e}")
+
+            if all_documents:
+                with st.spinner(f"Indexing {len(all_documents)} pages into FAISS vector store..."):
+                    try:
+                        # Clear old index to prevent stale vector leakage
+                        st.session_state.rag_engine.clear_index()
+                        total_chunks = st.session_state.rag_engine.index_documents(all_documents)
+
+                        st.session_state.indexed_files = [
+                            {"name": f["name"], "pages": f["pages"], "chunks": total_chunks}
+                            for f in successful_file_names
+                        ]
+                        st.success(f"Successfully indexed {len(successful_file_names)} file(s) into {total_chunks} chunks!")
+                        st.session_state.chat_history.append(
+                            {
+                                "role": "assistant",
+                                "content": f"Indexed **{len(successful_file_names)}** file(s) with **{total_chunks}** passages. You can now ask questions about your documents!",
+                                "sources": [],
+                            }
+                        )
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Embedding / Indexing Error: {e}")
+
+    # Handle clear / reset
+    if clear_clicked:
+        st.session_state.rag_engine.clear_index()
         st.session_state.chat_history = []
-        st.session_state.loaded_files = []
-        st.success("Vector store and chat history cleared.")
+        st.session_state.indexed_files = []
+        st.success("Index and conversation history cleared.")
         st.rerun()
 
+    # Index Status
+    st.markdown("---")
+    st.markdown("### 📊 Document Index Status")
+    total_indexed_chunks = st.session_state.rag_engine.total_chunks
+    st.write(f"- **Indexed Chunks:** `{total_indexed_chunks}`")
+    st.write(f"- **Embedding Model:** `text-embedding-004`")
+    st.write(f"- **Vector Index:** `FAISS (IndexFlatIP)`")
 
-# ---------------- MAIN APPLICATION HEADER ----------------
+    if st.session_state.indexed_files:
+        st.markdown("**Active Files:**")
+        for f in st.session_state.indexed_files:
+            st.markdown(f"• `{f['name']}` ({f['pages']} pages)")
+
+
+# ---------------- MAIN CHAT AREA ----------------
 st.markdown(
     """
     <div class="main-header">
         <h1>📄 Ghanex AI Document Assistant</h1>
-        <p>Production-grade Retrieval-Augmented Generation (RAG) powered by Google Gemini & FAISS</p>
+        <p>Production Retrieval-Augmented Generation (RAG) powered by Google Gemini & FAISS</p>
     </div>
     """,
     unsafe_allow_html=True,
 )
 
+# Suggested queries if index is populated
+if st.session_state.rag_engine.total_chunks > 0 and len(st.session_state.chat_history) <= 1:
+    st.markdown("##### 💡 Suggested Questions:")
+    sample_queries = [
+        "What cryptographic standard is required for data at rest?",
+        "What are the resolution SLA targets for Sev-1 incidents?",
+        "When are production deployments allowed to take place?",
+        "What is Ghanex Tech's policy on interstellar space travel?",  # Anti-hallucination test
+    ]
+    cols = st.columns(len(sample_queries))
+    for i, q in enumerate(sample_queries):
+        with cols[i]:
+            if st.button(q, key=f"sample_q_{i}", use_container_width=True):
+                st.session_state.pending_query = q
+                st.rerun()
 
-# ---------------- DOCUMENT INGESTION TABS ----------------
-tab_chat, tab_upload, tab_inspect = st.tabs(["💬 Assistant Chat", "📤 Upload Documents", "🔍 Vector Store Inspection"])
+# Display conversation history
+for msg in st.session_state.chat_history:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
+        if msg.get("sources"):
+            with st.expander(f"View Source Citations ({len(msg['sources'])} chunks)"):
+                for idx, doc in enumerate(msg["sources"], start=1):
+                    src_name = doc.metadata.get("source", "Document")
+                    page_num = doc.metadata.get("page", "Unknown")
+                    score = doc.metadata.get("score", 0.0)
+                    st.markdown(
+                        f"""
+                        <div class="citation-box">
+                            <div class="citation-title">Passage {idx} • {src_name} (Page {page_num}) • Similarity Score: {score:.4f}</div>
+                            <div class="citation-text">{doc.page_content}</div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
 
-with tab_upload:
-    st.subheader("Document Ingestion & Indexing")
-    st.caption("Upload one or more PDF files. The system automatically extracts text, performs recursive character chunking, generates embeddings with text-embedding-004, and indexes them in FAISS.")
+# Determine user input (from pending sample query or chat input)
+user_query = None
+if "pending_query" in st.session_state and st.session_state.pending_query:
+    user_query = st.session_state.pending_query
+    st.session_state.pending_query = None
+else:
+    chat_prompt = st.chat_input("Ask a question about your uploaded documents...")
+    if chat_prompt:
+        user_query = chat_prompt
 
-    uploaded_files = st.file_uploader(
-        "Select PDF Documents",
-        type=["pdf"],
-        accept_multiple_files=True,
-        help="Upload standard text-based PDF documents.",
-    )
+# Process query
+if user_query:
+    st.session_state.chat_history.append({"role": "user", "content": user_query})
+    with st.chat_message("user"):
+        st.markdown(user_query)
 
-    col_btn, col_info = st.columns([1, 3])
-    with col_btn:
-        index_btn = st.button("⚡ Index Uploaded PDFs", type="primary", use_container_width=True)
-
-    if index_btn:
-        if not uploaded_files:
-            st.warning("Please upload at least one PDF file.")
-        elif not st.session_state.api_key:
-            st.error("Google Gemini API Key is missing. Please provide it in the sidebar.")
+    with st.chat_message("assistant"):
+        if not st.session_state.api_key:
+            err_text = "Please enter your Google Gemini API Key in the sidebar to generate answers."
+            st.error(err_text)
+            st.session_state.chat_history.append({"role": "assistant", "content": err_text, "sources": []})
+        elif st.session_state.rag_engine.total_chunks == 0:
+            warn_text = "The vector store is empty. Please upload and index PDF documents or click 'Load Sample Handbook PDF' in the sidebar."
+            st.warning(warn_text)
+            st.session_state.chat_history.append({"role": "assistant", "content": warn_text, "sources": []})
         else:
-            loader = PDFLoader()
-            chunker = RecursiveTextChunker(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-            embedder = GeminiEmbedder(
-                api_key=st.session_state.api_key,
-                model_name=settings.default_embedding_model,
-            )
-
-            progress_bar = st.progress(0, text="Preparing ingestion...")
-            total_files = len(uploaded_files)
-            successfully_processed = 0
-
-            for idx, uploaded_file in enumerate(uploaded_files):
-                file_name = uploaded_file.name
-                progress_bar.progress(
-                    (idx) / total_files,
-                    text=f"Extracting text from '{file_name}' ({idx + 1}/{total_files})...",
+            with st.spinner("Searching document context and generating answer..."):
+                stream_gen, retrieved_sources = st.session_state.rag_engine.generate_answer_stream(
+                    query=user_query, top_k=4
                 )
 
-                try:
-                    # Ingest PDF
-                    doc = loader.load_pdf(uploaded_file, source_name=file_name)
+            # Stream response in real time
+            full_response = st.write_stream(stream_gen)
 
-                    # Chunk document
-                    chunks = chunker.chunk_document(doc)
-
-                    # Generate embeddings
-                    progress_bar.progress(
-                        (idx + 0.5) / total_files,
-                        text=f"Generating embeddings for {len(chunks)} chunks in '{file_name}'...",
-                    )
-                    texts = [c.text for c in chunks]
-                    embeddings = embedder.embed_texts(texts)
-
-                    # Store in FAISS
-                    st.session_state.vector_store.add_chunks(chunks, embeddings)
-
-                    st.session_state.loaded_files.append(
-                        {
-                            "name": doc.source_name,
-                            "pages": doc.total_pages,
-                            "chars": doc.total_chars,
-                            "chunks": len(chunks),
-                        }
-                    )
-                    successfully_processed += 1
-
-                except EncryptedPDFError as e:
-                    st.error(f"🔒 **{file_name}**: {e}")
-                except EmptyPDFError as e:
-                    st.error(f"⚠️ **{file_name}**: {e}")
-                except ScannedPDFError as e:
-                    st.error(f"🖼️ **{file_name}**: {e}")
-                except CorruptPDFError as e:
-                    st.error(f"❌ **{file_name}**: {e}")
-                except GeminiAPIKeyError as e:
-                    st.error(f"🔑 API Key Error: {e}")
-                    break
-                except GeminiEmbeddingError as e:
-                    st.error(f"🌐 Embedding API Error: {e}")
-                    break
-                except Exception as e:
-                    st.error(f"Unexpected error processing '{file_name}': {e}")
-
-            progress_bar.progress(1.0, text="Ingestion complete!")
-            if successfully_processed > 0:
-                st.success(
-                    f"Successfully indexed {successfully_processed} document(s). "
-                    f"Vector store now holds {st.session_state.vector_store.count} total chunks."
-                )
-                st.session_state.chat_history.append(
-                    {
-                        "role": "assistant",
-                        "content": f"Successfully indexed **{successfully_processed}** new document(s). You can now ask questions about them in the chat tab!",
-                        "sources": [],
-                    }
-                )
-
-    if st.session_state.loaded_files:
-        st.markdown("#### Currently Indexed Files:")
-        for f in st.session_state.loaded_files:
-            st.markdown(
-                f"- **{f['name']}** — `{f['pages']} pages`, `{f['chars']} characters`, `{f['chunks']} chunks`"
-            )
-
-
-with tab_inspect:
-    st.subheader("Vector Store Inspection & Metadata Browser")
-    st.caption("Inspect indexed passages, chunk IDs, source document bindings, and internal representations.")
-
-    if st.session_state.vector_store.count == 0:
-        st.info("The vector store is currently empty. Ingest documents or load the sample PDF to view chunks.")
-    else:
-        st.write(f"Total Chunks: **{len(st.session_state.vector_store.chunks)}**")
-        for idx, chunk in enumerate(st.session_state.vector_store.chunks):
-            with st.expander(f"Chunk #{idx} | {chunk.source_name} (Page {chunk.page_number}) | ID: {chunk.chunk_id}"):
-                st.markdown(f"**Length:** {chunk.char_count} chars")
-                st.code(chunk.text, language="text")
-
-
-with tab_chat:
-    # Sample Questions Banner
-    if st.session_state.vector_store.count > 0:
-        st.markdown("##### 💡 Suggested Questions:")
-        sample_questions = [
-            "What cryptographic standard is required for data at rest?",
-            "What are the resolution SLA targets for Sev-1 incidents?",
-            "What days and times are production deployments allowed?",
-            "What is Ghanex Tech's policy on time travel?",  # Hallucination test
-        ]
-        cols = st.columns(len(sample_questions))
-        for i, q in enumerate(sample_questions):
-            with cols[i]:
-                if st.button(q, key=f"sq_{i}", use_container_width=True):
-                    st.session_state.pending_query = q
-                    st.rerun()
-
-    # Display chat history
-    for message in st.session_state.chat_history:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
-            if message.get("sources"):
-                with st.expander(f"📚 Retrieved Context & Sources ({len(message['sources'])} passages)"):
-                    for s_idx, src in enumerate(message["sources"], start=1):
+            # Render expandable citations
+            if retrieved_sources:
+                with st.expander(f"View Source Citations ({len(retrieved_sources)} chunks)"):
+                    for idx, doc in enumerate(retrieved_sources, start=1):
+                        src_name = doc.metadata.get("source", "Document")
+                        page_num = doc.metadata.get("page", "Unknown")
+                        score = doc.metadata.get("score", 0.0)
                         st.markdown(
                             f"""
-                            <div class="citation-card">
-                                <div class="citation-meta">Passage {s_idx} • {src.chunk.source_name} (Page {src.chunk.page_number}) • Cosine Similarity: {src.score:.4f}</div>
-                                <div>{src.chunk.text}</div>
+                            <div class="citation-box">
+                                <div class="citation-title">Passage {idx} • {src_name} (Page {page_num}) • Similarity Score: {score:.4f}</div>
+                                <div class="citation-text">{doc.page_content}</div>
                             </div>
                             """,
                             unsafe_allow_html=True,
                         )
 
-    # Check for pending query or chat input
-    user_query = None
-    if "pending_query" in st.session_state and st.session_state.pending_query:
-        user_query = st.session_state.pending_query
-        st.session_state.pending_query = None
-    else:
-        chat_prompt = st.chat_input("Ask a question grounded in your uploaded documents...")
-        if chat_prompt:
-            user_query = chat_prompt
-
-    if user_query:
-        # Display user question
-        st.session_state.chat_history.append({"role": "user", "content": user_query})
-        with st.chat_message("user"):
-            st.markdown(user_query)
-
-        # Assistant generation
-        with st.chat_message("assistant"):
-            if not st.session_state.api_key:
-                err_msg = "Please configure your Google Gemini API Key in the sidebar to generate answers."
-                st.error(err_msg)
-                st.session_state.chat_history.append({"role": "assistant", "content": err_msg, "sources": []})
-            elif st.session_state.vector_store.count == 0:
-                err_msg = "No documents have been loaded into the vector index yet. Please upload a PDF or click 'Load Built-in Sample PDF' in the sidebar."
-                st.warning(err_msg)
-                st.session_state.chat_history.append({"role": "assistant", "content": err_msg, "sources": []})
-            else:
-                embedder = GeminiEmbedder(
-                    api_key=st.session_state.api_key,
-                    model_name=settings.default_embedding_model,
-                )
-                engine = RAGEngine(
-                    vector_store=st.session_state.vector_store,
-                    embedder=embedder,
-                    settings=settings,
-                )
-
-                with st.spinner("Retrieving relevant passages and synthesizing answer..."):
-                    stream_generator, retrieved_sources = engine.generate_answer_stream(
-                        query=user_query,
-                        top_k=top_k,
-                        temperature=temperature,
-                        model_name=selected_model,
-                    )
-
-                # Stream response
-                full_response = st.write_stream(stream_generator)
-
-                # Show citations
-                if retrieved_sources:
-                    with st.expander(f"📚 Retrieved Context & Sources ({len(retrieved_sources)} passages)"):
-                        for s_idx, src in enumerate(retrieved_sources, start=1):
-                            st.markdown(
-                                f"""
-                                <div class="citation-card">
-                                    <div class="citation-meta">Passage {s_idx} • {src.chunk.source_name} (Page {src.chunk.page_number}) • Cosine Similarity: {src.score:.4f}</div>
-                                    <div>{src.chunk.text}</div>
-                                </div>
-                                """,
-                                unsafe_allow_html=True,
-                            )
-
-                st.session_state.chat_history.append(
-                    {
-                        "role": "assistant",
-                        "content": full_response,
-                        "sources": retrieved_sources,
-                    }
-                )
+            st.session_state.chat_history.append(
+                {
+                    "role": "assistant",
+                    "content": full_response,
+                    "sources": retrieved_sources,
+                }
+            )
