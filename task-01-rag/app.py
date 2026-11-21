@@ -1,7 +1,7 @@
 """Ghanex Tech AI Document Assistant - Streamlit Application.
 
 Production-ready RAG application integrating PDFProcessor, RAGEngine,
-and an interactive streaming conversational interface.
+and an interactive streaming conversational interface powered by Groq and Google Gemini.
 """
 
 import os
@@ -100,52 +100,83 @@ st.markdown(
 
 
 def get_default_api_key() -> str:
-    """Retrieve Gemini API key from environment or Streamlit secrets."""
-    key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    """Retrieve API key from environment or Streamlit secrets (Groq or Gemini)."""
+    key = os.getenv("GROQ_API_KEY") or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
     if not key and hasattr(st, "secrets"):
-        key = st.secrets.get("GEMINI_API_KEY") or st.secrets.get("GOOGLE_API_KEY")
+        key = (
+            st.secrets.get("GROQ_API_KEY")
+            or st.secrets.get("GEMINI_API_KEY")
+            or st.secrets.get("GOOGLE_API_KEY")
+        )
     return key or ""
 
 
 # Initialize session states
-if "rag_engine" not in st.session_state:
-    st.session_state.rag_engine = RAGEngine(api_key=get_default_api_key())
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
-if "indexed_files" not in st.session_state:
-    st.session_state.indexed_files = []
 if "api_key" not in st.session_state:
     st.session_state.api_key = get_default_api_key()
+
+if "rag_engine" not in st.session_state:
+    st.session_state.rag_engine = RAGEngine(api_key=st.session_state.api_key)
+
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
+
+if "indexed_files" not in st.session_state:
+    st.session_state.indexed_files = []
 
 
 # ---------------- SIDEBAR ----------------
 with st.sidebar:
-    st.markdown("## ⚙️ Document Assistant Controls")
+    st.markdown("## ⚙️ Assistant Configuration")
 
     # API Key Input
     has_api_key = bool(st.session_state.api_key)
+    provider_name = "Groq" if st.session_state.rag_engine.provider == "groq" else "Gemini"
+
     if has_api_key:
         st.markdown(
-            '<span class="status-badge-active">● Gemini API Key Connected</span>',
+            f'<span class="status-badge-active">● {provider_name} API Key Connected</span>',
             unsafe_allow_html=True,
         )
     else:
         st.markdown(
-            '<span class="status-badge-inactive">○ Gemini API Key Missing</span>',
+            '<span class="status-badge-inactive">○ API Key Missing</span>',
             unsafe_allow_html=True,
         )
 
     user_key = st.text_input(
-        "Google Gemini API Key",
+        "API Key (Groq `gsk_...` or Gemini)",
         value=st.session_state.api_key,
         type="password",
-        placeholder="Enter your AIzaSy... key",
-        help="Reads automatically from .env or Streamlit secrets if present.",
+        placeholder="Enter gsk_... or AIzaSy...",
+        help="Reads automatically from .env or Streamlit secrets.",
     )
     if user_key != st.session_state.api_key:
         st.session_state.api_key = user_key.strip()
         st.session_state.rag_engine.set_api_key(user_key.strip())
         st.rerun()
+
+    st.markdown("---")
+
+    # Model Selection
+    st.markdown("### 🧠 LLM Model")
+    if st.session_state.rag_engine.provider == "groq":
+        model_options = [
+            "openai/gpt-oss-120b",
+            "qwen/qwen3.8-27b",
+            "openai/gpt-oss-20b",
+        ]
+    else:
+        model_options = ["gemini-2.0-flash", "gemini-1.5-flash"]
+
+    selected_model = st.selectbox(
+        "Active Model",
+        options=model_options,
+        index=0,
+        help="Select inference model.",
+    )
+    if selected_model != st.session_state.rag_engine.llm_model:
+        st.session_state.rag_engine.llm_model = selected_model
 
     st.markdown("---")
 
@@ -169,7 +200,7 @@ with st.sidebar:
     if sample_pdf_path.exists():
         if st.button("🚀 Load Sample Handbook PDF", use_container_width=True):
             if not st.session_state.api_key:
-                st.error("Please enter a Google Gemini API Key first.")
+                st.error("Please enter an API Key first.")
             else:
                 with st.spinner("Indexing sample policy PDF..."):
                     try:
@@ -183,7 +214,11 @@ with st.sidebar:
                         st.session_state.chat_history.append(
                             {
                                 "role": "assistant",
-                                "content": f"Loaded and indexed **sample_policy.pdf** ({len(sample_docs)} pages, {num_chunks} chunks). Ask me anything about engineering architecture, encryption standards, or incident SLAs!",
+                                "content": (
+                                    f"Loaded and indexed **sample_policy.pdf** ({len(sample_docs)} pages, {num_chunks} chunks). "
+                                    f"Using **{selected_model}** on {provider_name} with FAISS retrieval. "
+                                    "Ask me anything about engineering architecture, encryption standards, or incident SLAs!"
+                                ),
                                 "sources": [],
                             }
                         )
@@ -197,13 +232,12 @@ with st.sidebar:
         if not uploaded_files:
             st.warning("Please upload at least one PDF file.")
         elif not st.session_state.api_key:
-            st.error("Gemini API Key is required. Please provide it above.")
+            st.error("API Key is required. Please provide it above.")
         else:
             processor = PDFProcessor()
             all_documents = []
             successful_file_names = []
 
-            # Process each file with graceful exception handling
             for f in uploaded_files:
                 file_name = f.name
                 try:
@@ -258,8 +292,10 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("### 📊 Document Index Status")
     total_indexed_chunks = st.session_state.rag_engine.total_chunks
+    embed_desc = "Local Dense (384-dim)" if st.session_state.rag_engine.provider == "groq" else "Gemini (768-dim)"
+    st.write(f"- **Provider:** `{provider_name}`")
     st.write(f"- **Indexed Chunks:** `{total_indexed_chunks}`")
-    st.write(f"- **Embedding Model:** `text-embedding-004`")
+    st.write(f"- **Embeddings:** `{embed_desc}`")
     st.write(f"- **Vector Index:** `FAISS (IndexFlatIP)`")
 
     if st.session_state.indexed_files:
@@ -273,7 +309,7 @@ st.markdown(
     """
     <div class="main-header">
         <h1>📄 Ghanex AI Document Assistant</h1>
-        <p>Production Retrieval-Augmented Generation (RAG) powered by Google Gemini & FAISS</p>
+        <p>Production Retrieval-Augmented Generation (RAG) powered by Groq, Gemini & FAISS</p>
     </div>
     """,
     unsafe_allow_html=True,
@@ -333,7 +369,7 @@ if user_query:
 
     with st.chat_message("assistant"):
         if not st.session_state.api_key:
-            err_text = "Please enter your Google Gemini API Key in the sidebar to generate answers."
+            err_text = "Please enter your API Key in the sidebar to generate answers."
             st.error(err_text)
             st.session_state.chat_history.append({"role": "assistant", "content": err_text, "sources": []})
         elif st.session_state.rag_engine.total_chunks == 0:

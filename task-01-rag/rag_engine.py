@@ -1,12 +1,14 @@
-"""RAG Engine module coordinating text chunking, Gemini embeddings,
-FAISS vector storage, semantic search, and grounded generation.
+"""RAG Engine module coordinating text chunking, dense embeddings,
+FAISS vector storage, semantic search, and grounded generation with Groq and Gemini support.
 """
 
+import json
 import os
 import time
 from typing import Any, Dict, Generator, List, Optional, Tuple
 import faiss
 import numpy as np
+import requests
 
 try:
     from langchain_core.documents import Document
@@ -19,6 +21,7 @@ except ImportError:
         metadata: Dict[str, Any] = field(default_factory=dict)
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from sklearn.feature_extraction.text import TfidfVectorizer
 
 STRICT_SYSTEM_PROMPT = """You are a strict, factual AI Document Assistant.
 Your mission is to answer user questions based strictly and exclusively on the provided context passages.
@@ -33,22 +36,22 @@ CRITICAL GROUNDING INSTRUCTIONS:
 
 
 class RAGEngine:
-    """Retrieval-Augmented Generation engine managing the end-to-end RAG lifecycle."""
+    """Retrieval-Augmented Generation engine managing the end-to-end RAG lifecycle.
+    
+    Supports Groq (e.g. openai/gpt-oss-120b, qwen/qwen3.8-27b) and Google Gemini (gemini-2.0-flash).
+    """
 
     def __init__(
         self,
         api_key: Optional[str] = None,
-        llm_model: str = "gemini-2.0-flash",
-        embedding_model: str = "models/text-embedding-004",
+        llm_model: Optional[str] = None,
         chunk_size: int = 1000,
         chunk_overlap: int = 200,
-        dimension: int = 768,
     ):
         """
         Args:
-            api_key: Google Gemini API key.
-            llm_model: Target Gemini model for grounded generation.
-            embedding_model: Embedding model identifier.
+            api_key: Groq API key (starts with 'gsk_') or Gemini API key.
+            llm_model: Target LLM model name.
             chunk_size: Size of text chunks (characters).
                 Chunk size of 1000 characters (~200-250 tokens) corresponds to the
                 average length of a cohesive informational paragraph. This preserves
@@ -57,14 +60,25 @@ class RAGEngine:
                 Chunk overlap of 200 characters (~40-50 tokens) prevents cutting
                 sentences, entities, or definitions in half across chunk boundaries,
                 maintaining contextual continuity without causing redundant token bloat.
-            dimension: Embedding vector dimension (768 for text-embedding-004).
         """
-        self.api_key = api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-        self.llm_model = llm_model
-        self.embedding_model = embedding_model
+        self.api_key = (
+            api_key
+            or os.getenv("GROQ_API_KEY")
+            or os.getenv("GEMINI_API_KEY")
+            or os.getenv("GOOGLE_API_KEY")
+        )
+
+        # Detect provider
+        self.provider = self._detect_provider(self.api_key)
+
+        # Default model selection
+        if llm_model:
+            self.llm_model = llm_model
+        else:
+            self.llm_model = "openai/gpt-oss-120b" if self.provider == "groq" else "gemini-2.0-flash"
+
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
-        self.dimension = dimension
 
         # Text splitter
         self.text_splitter = RecursiveCharacterTextSplitter(
@@ -73,31 +87,40 @@ class RAGEngine:
             separators=["\n\n", "\n", ". ", "? ", "! ", " ", ""],
         )
 
+        # Vector dimension: 384 for fast local dense embedder, 768 for gemini
+        self.dimension = 768 if self.provider == "gemini" else 384
+
         # In-memory FAISS Index with Inner Product (Cosine similarity on normalized vectors)
         self.index: faiss.IndexFlatIP = faiss.IndexFlatIP(self.dimension)
         self.chunks: List[Document] = []
+        self._tfidf_vectorizer: Optional[TfidfVectorizer] = None
         self._genai_client = None
+
+    def _detect_provider(self, key: Optional[str]) -> str:
+        """Auto-detect provider based on API key prefix."""
+        if not key:
+            if os.getenv("GROQ_API_KEY"):
+                return "groq"
+            return "gemini"
+        if key.startswith("gsk_"):
+            return "groq"
+        return "gemini"
 
     def set_api_key(self, api_key: str):
-        """Update active API key."""
+        """Update active API key and configure provider."""
         self.api_key = api_key.strip()
-        self._genai_client = None
+        self.provider = self._detect_provider(self.api_key)
+        if self.provider == "groq" and "gemini" in self.llm_model:
+            self.llm_model = "openai/gpt-oss-120b"
+        elif self.provider == "gemini" and ("gpt-oss" in self.llm_model or "qwen" in self.llm_model):
+            self.llm_model = "gemini-2.0-flash"
 
-    def _get_client(self):
-        """Lazy initialization of Google GenAI client."""
-        if not self.api_key:
-            raise ValueError(
-                "Gemini API key is required. Please set GEMINI_API_KEY in .env or provide it in the UI."
-            )
-        if self._genai_client is None:
-            try:
-                from google import genai
-                self._genai_client = genai.Client(api_key=self.api_key)
-            except ImportError:
-                import google.generativeai as legacy_genai
-                legacy_genai.configure(api_key=self.api_key)
-                self._genai_client = legacy_genai
-        return self._genai_client
+        new_dim = 768 if self.provider == "gemini" else 384
+        if new_dim != self.dimension:
+            self.dimension = new_dim
+            self.clear_index()
+
+        self._genai_client = None
 
     def clear_index(self):
         """Completely reset the FAISS vector index and stored chunks.
@@ -107,6 +130,7 @@ class RAGEngine:
         """
         self.index = faiss.IndexFlatIP(self.dimension)
         self.chunks.clear()
+        self._tfidf_vectorizer = None
 
     @property
     def total_chunks(self) -> int:
@@ -131,6 +155,12 @@ class RAGEngine:
             return 0
 
         texts = [c.page_content for c in raw_chunks]
+
+        # Fit vectorizer for local dense embeddings if in Groq mode
+        if self.provider != "gemini":
+            self._tfidf_vectorizer = TfidfVectorizer(max_features=self.dimension, sublinear_tf=True)
+            self._tfidf_vectorizer.fit(texts)
+
         embeddings = self._embed_texts(texts)
 
         # Add vectors to FAISS
@@ -152,7 +182,7 @@ class RAGEngine:
         if self.total_chunks == 0 or not query.strip():
             return []
 
-        query_vector = self._embed_texts([query.strip()])  # shape (1, 768)
+        query_vector = self._embed_texts([query.strip()])  # shape (1, dimension)
         k = min(top_k, self.total_chunks)
         distances, indices = self.index.search(query_vector, k)
 
@@ -161,7 +191,6 @@ class RAGEngine:
             if idx < 0 or idx >= len(self.chunks):
                 continue
             original_chunk = self.chunks[idx]
-            # Create a copy with score in metadata
             doc_copy = Document(
                 page_content=original_chunk.page_content,
                 metadata={**original_chunk.metadata, "score": float(score)},
@@ -171,15 +200,7 @@ class RAGEngine:
         return results
 
     def generate_answer(self, query: str, top_k: int = 4) -> Tuple[str, List[Document]]:
-        """Generate a grounded, cited answer using retrieved context passages.
-
-        Args:
-            query: User's question.
-            top_k: Number of chunks to retrieve.
-
-        Returns:
-            Tuple[str, List[Document]]: (Generated answer, Retrieved source chunks)
-        """
+        """Generate a grounded, cited answer using retrieved context passages."""
         stream_gen, sources = self.generate_answer_stream(query, top_k=top_k)
         tokens = [token for token in stream_gen]
         return "".join(tokens), sources
@@ -213,79 +234,135 @@ class RAGEngine:
             f"\"The provided document(s) do not contain information regarding this question.\""
         )
 
-        stream = self._call_gemini_stream(prompt_text)
+        if self.provider == "groq":
+            stream = self._call_groq_stream(prompt_text)
+        else:
+            stream = self._call_gemini_stream(prompt_text)
+
         return stream, sources
 
-    def _call_gemini_stream(self, prompt: str) -> Generator[str, None, None]:
-        """Call Gemini API with streaming."""
-        client = self._get_client()
-        clean_model = self.llm_model.replace("models/", "")
+    def _call_groq_stream(self, prompt: str) -> Generator[str, None, None]:
+        """Stream response from Groq Cloud API."""
+        if not self.api_key:
+            yield "Groq API Key is missing. Please set GROQ_API_KEY in .env or provide it in the sidebar."
+            return
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0",
+        }
+        payload = {
+            "model": self.llm_model,
+            "messages": [
+                {"role": "system", "content": STRICT_SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": 0.2,
+            "stream": True,
+        }
 
         try:
-            if hasattr(client, "models"):
-                # google-genai SDK
-                from google.genai import types
-                response = client.models.generate_content_stream(
-                    model=clean_model,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        system_instruction=STRICT_SYSTEM_PROMPT,
-                        temperature=0.2,
-                    ),
-                )
-                for chunk in response:
-                    if chunk.text:
-                        yield chunk.text
-            else:
-                # google-generativeai SDK
-                model = client.GenerativeModel(
-                    model_name=clean_model,
-                    system_instruction=STRICT_SYSTEM_PROMPT,
-                )
-                response = model.generate_content(
-                    prompt,
-                    stream=True,
-                    generation_config={"temperature": 0.2},
-                )
-                for chunk in response:
-                    if chunk.text:
-                        yield chunk.text
+            with requests.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers=headers,
+                json=payload,
+                stream=True,
+                timeout=45,
+            ) as response:
+                if response.status_code != 200:
+                    yield f"Error from Groq API (HTTP {response.status_code}): {response.text}"
+                    return
+
+                for line in response.iter_lines():
+                    if not line:
+                        continue
+                    line_str = line.decode("utf-8")
+                    if line_str.startswith("data: "):
+                        data_str = line_str[6:].strip()
+                        if data_str == "[DONE]":
+                            break
+                        try:
+                            data = json.loads(data_str)
+                            delta = data["choices"][0].get("delta", {})
+                            content = delta.get("content", "")
+                            if content:
+                                yield content
+                        except Exception:
+                            pass
         except Exception as e:
-            yield f"\n\n[Error generating response: {e}]"
+            yield f"\n\n[Error communicating with Groq: {e}]"
 
-    def _embed_texts(self, texts: List[str], batch_size: int = 20) -> np.ndarray:
-        """Generate L2-normalized float32 embeddings for a list of texts."""
-        client = self._get_client()
-        clean_model = self.embedding_model.replace("models/", "")
+    def _call_gemini_stream(self, prompt: str) -> Generator[str, None, None]:
+        """Stream response from Google Gemini API."""
+        if not self.api_key:
+            yield "Gemini API Key is missing. Please set GEMINI_API_KEY in .env or provide it in the sidebar."
+            return
 
-        all_embeddings: List[List[float]] = []
+        clean_model = self.llm_model.replace("models/", "")
+        try:
+            from google import genai
+            from google.genai import types
+
+            client = genai.Client(api_key=self.api_key)
+            response = client.models.generate_content_stream(
+                model=clean_model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=STRICT_SYSTEM_PROMPT,
+                    temperature=0.2,
+                ),
+            )
+            for chunk in response:
+                if chunk.text:
+                    yield chunk.text
+        except Exception as e:
+            yield f"\n\n[Error generating Gemini response: {e}]"
+
+    def _embed_texts(self, texts: List[str]) -> np.ndarray:
+        """Compute L2-normalized float32 embeddings."""
+        if self.provider == "gemini":
+            return self._embed_gemini(texts)
+        else:
+            return self._embed_local(texts)
+
+    def _embed_local(self, texts: List[str]) -> np.ndarray:
+        """Fast local dense text embeddings (384 dimensions) with L2 normalization."""
+        if self._tfidf_vectorizer is None:
+            self._tfidf_vectorizer = TfidfVectorizer(max_features=self.dimension, sublinear_tf=True)
+            self._tfidf_vectorizer.fit(texts)
+
+        raw = self._tfidf_vectorizer.transform(texts).toarray().astype(np.float32)
+        # Pad to self.dimension if vocabulary is smaller
+        if raw.shape[1] < self.dimension:
+            raw = np.pad(raw, ((0, 0), (0, self.dimension - raw.shape[1])))
+
+        norms = np.linalg.norm(raw, axis=1, keepdims=True)
+        norms = np.where(norms == 0, 1e-12, norms)
+        return (raw / norms).astype(np.float32)
+
+    def _embed_gemini(self, texts: List[str], batch_size: int = 20) -> np.ndarray:
+        """Generate Gemini embeddings using models/text-embedding-004."""
+        from google import genai
+        client = genai.Client(api_key=self.api_key)
+        all_embeddings = []
 
         for i in range(0, len(texts), batch_size):
             batch = [t if t.strip() else " " for t in texts[i : i + batch_size]]
             for attempt in range(1, 4):
                 try:
-                    if hasattr(client, "models"):
-                        resp = client.models.embed_content(
-                            model=clean_model,
-                            contents=batch,
-                        )
-                        embeddings = [e.values for e in resp.embeddings]
-                        all_embeddings.extend(embeddings)
-                        break
-                    else:
-                        resp = client.embed_content(
-                            model=f"models/{clean_model}",
-                            content=batch,
-                        )
-                        all_embeddings.extend(resp["embedding"])
-                        break
+                    resp = client.models.embed_content(
+                        model="text-embedding-004",
+                        contents=batch,
+                    )
+                    all_embeddings.extend([e.values for e in resp.embeddings])
+                    break
                 except Exception as e:
                     if attempt == 3:
                         raise e
                     time.sleep(2 ** attempt)
 
         vectors = np.array(all_embeddings, dtype=np.float32)
-        # L2 normalize so Inner Product = Cosine Similarity
         norms = np.linalg.norm(vectors, axis=1, keepdims=True)
         norms = np.where(norms == 0, 1e-12, norms)
         return (vectors / norms).astype(np.float32)

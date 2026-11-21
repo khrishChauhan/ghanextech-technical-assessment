@@ -1,6 +1,6 @@
 # Task 1: AI Document Assistant using Retrieval-Augmented Generation (RAG)
 
-A complete, production-ready, modular AI Document Assistant built for the **Ghanex Tech GenAI Developer Assessment**. The system allows users to upload multi-page PDF documents and query them in natural language. Powered by **Google Gemini** (`gemini-2.0-flash` / `models/text-embedding-004`) and an in-memory **FAISS** vector store, the assistant returns grounded, cited answers while strictly eliminating hallucinations.
+A complete, production-ready, modular AI Document Assistant built for the **Ghanex Tech GenAI Developer Assessment**. The system allows users to upload multi-page PDF documents and query them in natural language. Powered by **Groq** (`openai/gpt-oss-120b`, `qwen/qwen3.8-27b`) and **Google Gemini** (`gemini-2.0-flash`) with an in-memory **FAISS** vector store, the assistant returns grounded, cited answers while strictly eliminating hallucinations.
 
 ---
 
@@ -20,8 +20,8 @@ flowchart TD
     subgraph Indexing ["2. Chunking & Vector Indexing (rag_engine.py)"]
         DocList --> Chunker["RecursiveCharacterTextSplitter\n(chunk_size=1000, chunk_overlap=200)"]
         Chunker --> Chunks["Text Chunks + Metadata (source, page)"]
-        Chunks --> Embedder["Google Gemini Embedder\n(models/text-embedding-004)"]
-        Embedder --> Norm["L2 Vector Normalization (768-dim float32)"]
+        Chunks --> Embedder["Dense Vector Embedder\n(Local 384-dim / Gemini 768-dim)"]
+        Embedder --> Norm["L2 Vector Normalization (float32)"]
         Norm --> FAISS["FAISS IndexFlatIP (Cosine Inner Product)"]
     end
 
@@ -32,11 +32,13 @@ flowchart TD
         SimSearch --> RetrievedPassages["Top-4 Relevant Chunks + Scores"]
         RetrievedPassages --> GroundedPrompt["Strict Grounded System Prompt\n(Explicit Anti-Hallucination Fallback)"]
         UserQ --> GroundedPrompt
-        GroundedPrompt --> GeminiLLM["Gemini 2.0 Flash / 1.5 Flash (Streamed)"]
+        GroundedPrompt --> LLMProvider{"Provider Auto-Detect"}
+        LLMProvider -->|Groq gsk_...| GroqLLM["Groq Cloud API (openai/gpt-oss-120b / qwen3.8-27b)"]
+        LLMProvider -->|Gemini AIza...| GeminiLLM["Google Gemini API (gemini-2.0-flash)"]
     end
 
     subgraph UI ["4. Streamlit Frontend (app.py)"]
-        GeminiLLM --> StreamResponse["Real-Time Token Streaming (st.write_stream)"]
+        GroqLLM & GeminiLLM --> StreamResponse["Real-Time Token Streaming (st.write_stream)"]
         RetrievedPassages --> CitationExpander["st.expander('View Source Citations')\n(Document Name, Page Number, Content, Score)"]
     end
 ```
@@ -54,9 +56,14 @@ flowchart TD
   - Provides a contextual bridge between consecutive chunks.
   - Guarantees that multi-sentence clauses, cryptographic formulas, and entity definitions spanning chunk boundaries are not bisected or lost during top-$k$ retrieval.
 
-### 2. Embedding Model: Google `models/text-embedding-004`
-- **Dimensionality:** 768-dimensional dense representations.
-- **Precision:** State-of-the-art retrieval accuracy on MTEB benchmarks.
+### 2. Dual-Provider LLM & Embeddings Support
+- **Groq Cloud API (Ultra-Fast Inference):**
+  - Flagship model: `openai/gpt-oss-120b` (131k context window, high reasoning).
+  - Alternative: `qwen/qwen3.8-27b` (rapid low-latency reasoning).
+  - Streaming tokens over HTTP Server-Sent Events (SSE) directly into Streamlit's `st.write_stream`.
+  - Paired with local dense embeddings (384 dimensions, zero external API dependency).
+- **Google Gemini API:**
+  - Model: `gemini-2.0-flash` with `models/text-embedding-004` (768 dimensions).
 - **L2 Normalization & Inner Product (`IndexFlatIP`):**
   All chunk vectors and query vectors are normalized to unit length ($\|v\|_2 = 1.0$). Consequently, the inner product computed by FAISS equals exact Cosine Similarity:
   $$\text{sim}(u, v) = \frac{u \cdot v}{\|u\|_2 \|v\|_2} = u_{\text{norm}} \cdot v_{\text{norm}}$$
@@ -79,14 +86,15 @@ The system prompt strictly commands:
 
 ```
 task-01-rag/
+├── .env                         # Local environment variables (Groq / Gemini key)
 ├── .env.example                 # Template for API keys
 ├── requirements.txt             # Pinned project dependencies
 ├── README.md                    # System architecture & setup documentation
 ├── pdf_processor.py             # PDFProcessor class with multi-page extraction & edge handling
-├── rag_engine.py                # RAGEngine class with chunking, FAISS, and Gemini integration
+├── rag_engine.py                # RAGEngine class with chunking, FAISS, and Groq/Gemini integration
 ├── app.py                       # Modern Streamlit UI with streaming and citations
 │
-├── tests/                       # Complete automated unit test suite (22 tests)
+├── tests/                       # Complete automated unit test suite (23 tests)
 │   ├── test_pdf_processor_and_engine.py
 │   ├── test_pdf_loader.py
 │   ├── test_chunker.py
@@ -104,7 +112,7 @@ task-01-rag/
 
 ### Prerequisites
 - Python 3.10, 3.11, or 3.12
-- Google Gemini API Key ([Get one free from Google AI Studio](https://aistudio.google.com/app/apikey))
+- A Groq Cloud API Key (starts with `gsk_...`) or Google Gemini API Key
 
 ### 1. Navigate to Project Directory
 ```bash
@@ -129,13 +137,9 @@ pip install -r requirements.txt
 ```
 
 ### 4. Configure Environment Variables
-Copy `.env.example` to `.env`:
-```bash
-cp .env.example .env
-```
-Inside `.env`, insert your Gemini API Key:
+Inside `task-01-rag/.env`:
 ```ini
-GEMINI_API_KEY=AIzaSyYourGeminiApiKeyHere
+GROQ_API_KEY=gsk_your_groq_api_key_here
 ```
 *(Alternatively, enter your API key directly in the sidebar password field in the web UI).*
 
@@ -155,12 +159,12 @@ Execute the automated test suite with verbose reporting:
 pytest tests -v
 ```
 
-All 22 unit tests verify:
+All 23 unit tests verify:
 - Multi-page extraction and page metadata tagging (`source` and `page`).
 - Graceful error handling for encrypted, empty, scanned, and corrupt PDFs.
 - Recursive character splitting and parameter boundary enforcement.
 - FAISS cosine similarity ranking and index clearing (`clear_index()`).
-- Strict grounding prompts and anti-hallucination refusal messages.
+- Provider auto-detection (Groq vs. Gemini) and anti-hallucination refusal messages.
 
 ---
 
@@ -187,14 +191,6 @@ All 22 unit tests verify:
    - **Main file path:** `task-01-rag/app.py`
 4. In **Advanced Settings -> Secrets**, add:
    ```toml
-   GEMINI_API_KEY = "AIzaSyYourGeminiApiKeyHere"
+   GROQ_API_KEY = "gsk_your_key_here"
    ```
 5. Click **Deploy!**
-
----
-
-## 🚀 Known Limitations & Future Improvements
-
-1. **OCR Support:** Currently requires machine-readable text. Integrating Tesseract OCR or Google Cloud Document AI would enable ingesting scanned document images.
-2. **Hybrid Search (BM25 + Dense):** Combining BM25 keyword matching with dense embeddings would improve retrieval accuracy on exact acronyms and part numbers.
-3. **Cross-Encoder Reranking:** Adding a lightweight reranker (e.g., Cohere Rerank or BGE-Reranker) before context injection would further boost passage relevance.

@@ -1,8 +1,7 @@
-"""Unit tests for PDFProcessor and RAGEngine top-level modules."""
+"""Unit tests for PDFProcessor and RAGEngine modules."""
 
 import io
 from pathlib import Path
-import numpy as np
 import pytest
 import pypdf
 
@@ -65,25 +64,24 @@ def test_pdf_processor_corrupt():
         processor.extract_text_from_pdf(b"invalid_bytes_xyz", source_name="bad.pdf")
 
 
-def test_rag_engine_index_and_clear():
-    engine = RAGEngine(api_key="mock_key")
+def test_rag_engine_groq_provider_detection():
+    engine = RAGEngine(api_key="gsk_test123456789")
+    assert engine.provider == "groq"
+    assert engine.dimension == 384
+    assert "gpt-oss" in engine.llm_model or "qwen" in engine.llm_model
 
-    # Mock embed_texts to return random unit vectors
-    def mock_embed(texts, batch_size=20):
-        vecs = np.random.randn(len(texts), 768).astype(np.float32)
-        norms = np.linalg.norm(vecs, axis=1, keepdims=True)
-        return vecs / np.where(norms == 0, 1e-12, norms)
 
-    engine._embed_texts = mock_embed
+def test_rag_engine_index_search_and_clear():
+    engine = RAGEngine(api_key="gsk_test_key")
 
     from langchain_core.documents import Document
     mock_docs = [
         Document(
-            page_content="Data encryption must use AES-256-GCM. " * 30,
+            page_content="Data encryption must use AES-256-GCM standard for all at-rest storage.",
             metadata={"source": "sec.pdf", "page": 1},
         ),
         Document(
-            page_content="Deployment occurs on Tuesday mornings. " * 30,
+            page_content="Production deployment pipeline runs on Tuesday mornings.",
             metadata={"source": "sec.pdf", "page": 2},
         ),
     ]
