@@ -38,27 +38,36 @@ Copy the markdown template below, fill in your details, and submit it through th
 ## Task Deliverables
 
 ### Task 1: AI Document Assistant (RAG)
-- **GitHub Repository URL:** 
-- **Live Deployed Application URL:** 
-- **Primary Technologies Used:** (e.g., Python, Streamlit, LangChain, ChromaDB, Gemini API)
+- **GitHub Repository URL:** https://github.com/khrishChauhan/ghanextech-technical-assessment/tree/main/task-01-rag
+- **Live Deployed Application URL:** [Streamlit Deployment URL]
+- **Primary Technologies Used:** Python 3.12, Streamlit, Groq API (`openai/gpt-oss-120b`, `qwen/qwen3.8-27b`), Google Gemini API (`gemini-2.0-flash`, `models/text-embedding-004`), FAISS (`faiss-cpu`), LangChain Text Splitters, PyPDF, PDFPlumber.
 - **Project Summary:** 
-  *(2-3 paragraphs describing your architecture, chunking strategy, embedding model choice, and features implemented)*
+  A production-ready, modular AI Document Assistant employing Retrieval-Augmented Generation (RAG). Documents are parsed page-by-page using PyPDF with a PDFPlumber fallback for complex tabular layouts. Extracted passages undergo hierarchical recursive character splitting (`chunk_size=1000`, `chunk_overlap=200`) designed to capture complete semantic paragraphs without diluting vector representations or exceeding attention windows. Chunks are converted into dense float32 vectors, L2-normalized, and indexed into an in-memory FAISS `IndexFlatIP` store, mathematically guaranteeing that inner products represent exact Cosine Similarity.
+  
+  The retrieval engine extracts the top-4 most relevant passages with full lineage tracking (`source` file name, `page` number, similarity score). The query and context are dispatched to an ultra-fast LLM (Groq / Gemini) guided by strict system grounding prompts. Hallucinations are actively prevented: if facts are missing from the context, the model explicitly outputs: *"The provided document(s) do not contain information regarding this question."* Responses stream in real-time, accompanied by expandable citation cards showing exact source excerpts and relevance scores.
 - **Key Challenges & Solutions:** 
-  *(Describe technical obstacles encountered during development and how you resolved them)*
+  - *Scanned and Encrypted PDF Edge Cases:* Encountered raster/image-only PDFs and password-protected files that cause standard parsers to crash. Built defensive exception hierarchies (`EncryptedPDFError`, `ScannedPDFError`, `EmptyPDFError`, `CorruptPDFError`) with character-density thresholding (<25 chars) and clear user alerts.
+  - *Vector Store Stale Leakage:* Re-indexing documents often leads to residual vectors leaking across sessions. Implemented an explicit `clear_index()` lifecycle that purges both the FAISS index and metadata registry upon new uploads.
+  - *Dual LLM Provider Flexibility:* Integrated automated provider detection based on key format (`gsk_` for Groq, `AIza` for Gemini), pairing Groq with fast local dense embeddings and Gemini with `text-embedding-004`.
 
 ---
 
 ### Task 2: AI Agent with Tool Calling
-- **GitHub Repository URL:** 
-- **Live Deployed Application URL:** 
-- **Primary Technologies Used:** (e.g., Python, LangChain, Groq, Open-Meteo API)
+- **GitHub Repository URL:** https://github.com/khrishChauhan/ghanextech-technical-assessment/tree/main/task-02-ai-agent
+- **Live Deployed Application URL:** [Streamlit Deployment URL]
+- **Primary Technologies Used:** Python 3.12, Streamlit, Groq Python SDK, Open-Meteo REST & Geocoding APIs, Wikipedia REST & OpenSearch APIs, Python `ast` module.
 - **Implemented Tools:** 
-  1. *[Tool Name 1]: [Brief summary of purpose and inputs]*
-  2. *[Tool Name 2]: [Brief summary of purpose and inputs]*
+  1. `calculator`: Safe mathematical expression evaluator using Python Abstract Syntax Trees (AST). Eliminates code injection by strictly forbidding `eval()`, supporting binary operators (+, -, *, /, //, %, **, ^), unary signs, parentheses, and division-by-zero protection. Input: `expression` (string).
+  2. `get_weather`: Live real-time global weather conditions fetching temperature (°C), wind speed, and weather condition summaries via Open-Meteo with geocoding resolution. Input: `city` (string).
+  3. `wikipedia_search`: Queries Wikipedia's OpenSearch and REST summary APIs to extract verified encyclopedic overviews, summaries, and reference links. Input: `query` (string).
 - **Project Summary:** 
-  *(Describe your agent architecture, reasoning loop, tool execution workflow, and error handling)*
+  A multi-turn conversational AI Agent with autonomous reasoning and dynamic tool calling powered by Groq Cloud (`llama-3.3-70b-versatile`, `llama-3.1-8b-instant`, `qwen/qwen3.8-27b`, `openai/gpt-oss-120b`). The `ToolCallingAgent` uses a ReAct-style reasoning loop: it analyzes user intent, decides whether to respond directly (for greetings and general dialogue) or dispatch one or more external tools, and loops until all required actions are satisfied or `max_iterations=5` is reached.
+  
+  Conversational memory is sustained across turns within `ToolCallingAgent.messages` according to the OpenAI/Groq function calling specification. Under each agent response, an expandable execution trace (`st.expander("🛠️ Tool Executions")`) renders step-by-step telemetry, including input arguments, millisecond execution durations, and structured output payloads.
 - **Key Challenges & Solutions:** 
-  *(Describe technical obstacles encountered and how you resolved them)*
+  - *Safe Math Evaluation without Security Vulnerabilities:* Standard `eval()` allows dangerous arbitrary code execution. Engineered an AST walker that strictly inspects `ast.BinOp`, `ast.UnaryOp`, `ast.Constant`, completely rejecting statements, function calls, imports, and attribute lookups.
+  - *Sequential Multi-Tool Execution:* Handled compound questions by managing intermediate tool call states, feeding tool outputs back into the conversation, and allowing the LLM to synthesize a cohesive final answer.
+  - *Network Resilience & Error Isolation:* Wrapped external API calls (geocoding, weather, Wikipedia) in dedicated exception handlers returning structured error payloads, enabling the agent to recover gracefully and inform the user without crashing.
 
 ---
 
