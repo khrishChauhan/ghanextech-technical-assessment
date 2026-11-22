@@ -1,0 +1,7 @@
+# Ghanex Tech Task 3: GitHub Repository AI Analyzer Dependencies
+streamlit>=1.38.0
+groq>=0.11.0
+requests>=2.31.0
+python-dotenv>=1.0.1
+pydantic>=2.8.0
+pytest>=8.0.0
