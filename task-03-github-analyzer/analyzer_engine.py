@@ -53,7 +53,7 @@ class RepoAnalyzer:
             model: Target LLM model identifier.
             temperature: Sampling temperature for balanced factual rigor.
         """
-        self.api_key = api_key or os.getenv("GROQ_API_KEY")
+        self.api_key = api_key if api_key is not None else os.getenv("GROQ_API_KEY")
         self.model = model
         self.temperature = temperature
         self._client: Optional[Groq] = None
