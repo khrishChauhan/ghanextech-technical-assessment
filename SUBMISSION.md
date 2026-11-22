@@ -72,17 +72,21 @@ Copy the markdown template below, fill in your details, and submit it through th
 ---
 
 ### Task 3: GitHub Repository AI Analyzer & Open-Source Contribution
-- **GitHub Repository URL:** 
-- **Live Deployed Application URL:** 
-- **Primary Technologies Used:** (e.g., Python, Streamlit, GitHub REST API, Gemini API)
+- **GitHub Repository URL:** https://github.com/khrishChauhan/ghanextech-technical-assessment/tree/main/task-03-github-analyzer
+- **Live Deployed Application URL:** [Streamlit Deployment URL]
+- **Primary Technologies Used:** Python 3.12, Streamlit, Groq Python SDK (`llama-3.3-70b-versatile`, `qwen/qwen3.8-27b`), GitHub REST API v3, Requests, Pydantic, Pytest.
 - **Project Summary:** 
-  *(Explain how your analyzer ingests repositories, calculates metrics, and generates AI recommendations)*
+  An autonomous GitHub Repository AI Analyzer web application that provides deep codebase architectural audits and actionable open-source contribution roadmaps. Ingestion occurs via the GitHub REST API v3, parsing repository inputs (full URLs, `.git` suffixes, and shorthand identifiers), fetching metadata (stars, forks, open issues, watchers, primary language, license, and topics), raw `README.md` documentation, recursive file trees, and package manifest descriptors (`pyproject.toml`, `requirements.txt`, `package.json`, `Cargo.toml`, `go.mod`).
+  
+  The ingested context is formatted into a structured audit prompt and dispatched to Groq Cloud (`llama-3.3-70b-versatile` / `qwen/qwen3.8-27b`). The model synthesizes an executive summary, architectural design patterns, three concrete engineering recommendations (testing, documentation, CI/CD), and a beginner-friendly contribution roadmap. The Streamlit dashboard renders key metric cards, tabbed views, and a one-click Markdown export.
 - **Open-Source Contribution:**
-  - **Target Open-Source Repository:** [URL of the open-source project]
-  - **Contribution URL (Issue / Pull Request):** [Direct link to your issue or PR]
-  - **Contribution Summary:** *(Explain the issue identified, the rationale, and the contribution made)*
+  - **Target Open-Source Repository:** [URL of the open-source project, e.g. https://github.com/psf/requests or https://github.com/pallets/flask]
+  - **Contribution URL (Issue / Pull Request):** [Direct link to your submitted Issue or Pull Request]
+  - **Contribution Summary:** Identified edge-case handling or documentation gap; contributed fix/enhancement following community contribution guidelines.
 - **Key Challenges & Solutions:** 
-  *(Describe technical obstacles encountered and how you resolved them)*
+  - *Rate-Limiting Interception & PAT Support:* Unauthenticated GitHub REST queries are capped at 60 req/hr. Engineered rate-limit interception inspecting `X-RateLimit-Remaining` and `X-RateLimit-Reset` headers, raising descriptive `GitHubRateLimitError` exceptions with UTC reset timestamps and optional PAT injection increasing limits to 5,000 req/hr.
+  - *Context Budgeting for Large Repositories:* Monolithic codebases have tens of thousands of tree nodes and massive README files. Implemented intelligent truncation: top 80 file paths, manifest excerpts capped at 2.5KB, and README excerpts capped at 5KB, maximizing LLM context efficiency while preserving essential architecture.
+  - *Zero-Downtime Model Fallbacks:* Provided automated fallbacks if the user's Groq key lacks access to specific preview models, routing requests between `llama-3.3-70b-versatile` and `qwen/qwen3.8-27b`.
 
 ---
 
