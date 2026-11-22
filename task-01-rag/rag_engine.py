@@ -96,6 +96,15 @@ class RAGEngine:
         self._tfidf_vectorizer: Optional[TfidfVectorizer] = None
         self._genai_client = None
 
+    def __getattr__(self, name: str) -> Any:
+        """Safeguard for legacy cached session instances."""
+        if name == "provider":
+            key = getattr(self, "api_key", None)
+            val = self._detect_provider(key)
+            self.provider = val
+            return val
+        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+
     def _detect_provider(self, key: Optional[str]) -> str:
         """Auto-detect provider based on API key prefix."""
         if not key:

@@ -119,7 +119,7 @@ def get_default_api_key() -> str:
 if "api_key" not in st.session_state:
     st.session_state.api_key = get_default_api_key()
 
-if "rag_engine" not in st.session_state:
+if "rag_engine" not in st.session_state or not hasattr(st.session_state.rag_engine, "provider"):
     st.session_state.rag_engine = RAGEngine(api_key=st.session_state.api_key)
 
 if "chat_history" not in st.session_state:
@@ -135,7 +135,12 @@ with st.sidebar:
 
     # API Key Input
     has_api_key = bool(st.session_state.api_key)
-    provider_name = "Groq" if st.session_state.rag_engine.provider == "groq" else "Gemini"
+    current_provider = getattr(
+        st.session_state.rag_engine,
+        "provider",
+        "groq" if (st.session_state.api_key and st.session_state.api_key.startswith("gsk_")) else "gemini",
+    )
+    provider_name = "Groq" if current_provider == "groq" else "Gemini"
 
     if has_api_key:
         st.markdown(
@@ -164,7 +169,7 @@ with st.sidebar:
 
     # Model Selection
     st.markdown("### 🧠 LLM Model")
-    if st.session_state.rag_engine.provider == "groq":
+    if current_provider == "groq":
         model_options = [
             "openai/gpt-oss-120b",
             "qwen/qwen3.8-27b",
@@ -296,7 +301,7 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("### 📊 Document Index Status")
     total_indexed_chunks = st.session_state.rag_engine.total_chunks
-    embed_desc = "Local Dense (384-dim)" if st.session_state.rag_engine.provider == "groq" else "Gemini (768-dim)"
+    embed_desc = "Local Dense (384-dim)" if current_provider == "groq" else "Gemini (768-dim)"
     st.write(f"- **Provider:** `{provider_name}`")
     st.write(f"- **Indexed Chunks:** `{total_indexed_chunks}`")
     st.write(f"- **Embeddings:** `{embed_desc}`")
