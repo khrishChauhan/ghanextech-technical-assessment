@@ -1,110 +1,176 @@
-# Ghanex Tech – GenAI & Open-Source Developer Intern Assessment
+# Ghanex Tech – GenAI & Open-Source Developer Intern Technical Assessment
 
-This repository contains the technical assessment for the **GenAI and Open-Source Developer Intern** role at [Ghanex Tech](https://ghanextech.com/).
+[![Python 3.12](https://img.shields.io/badge/Python-3.12%2B-blue.svg?logo=python&logoColor=white)](https://www.python.org/)
+[![Streamlit](https://img.shields.io/badge/Frontend-Streamlit%201.38%2B-FF4B4B.svg?logo=streamlit&logoColor=white)](https://streamlit.io/)
+[![Groq Cloud](https://img.shields.io/badge/LLM-Groq%20Cloud-F55036.svg)](https://groq.com/)
+[![Google Gemini](https://img.shields.io/badge/LLM-Google%20Gemini-8E75C4.svg?logo=googlegemini&logoColor=white)](https://ai.google.dev/)
+[![Vector Store](https://img.shields.io/badge/Vector%20Store-FAISS-00599C.svg)](https://github.com/facebookresearch/faiss)
+[![Tests Passing](https://img.shields.io/badge/Tests-55%2F55%20Passed%20(100%25)-brightgreen.svg)]()
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
----
-
-## About the Role
-
-**Position:** GenAI & Open-Source Developer Intern  
-**Duration:** 3 months  
-**Mode:** Fully remote  
-**Stipend:** Performance-based (discussed during the selection process)  
-**Experience level:** Freshers are welcome
+Production-ready, modular monorepo containing complete implementations for all three tasks of the **Ghanex Tech Technical Assessment** for the **GenAI & Open-Source Developer Intern** role.
 
 ---
 
-## Purpose of This Assessment
+## 📑 Assessment Overview & Deliverables Matrix
 
-We use this assessment to identify candidates who can build, understand, debug, and deploy real software — not just generate code with AI tools.
-
-You will work with Python, LLMs, vector search, REST APIs, and GitHub. The tasks are intentionally practical: each one maps to work you would actually do during the internship.
-
-We want to see how you structure a project, handle edge cases, write readable code, and communicate your design decisions. AI coding tools are allowed, but you must own and understand everything you submit.
-
----
-
-## Assessment Structure
-
-The assessment consists of three independent tasks. All three must be completed and deployed within **3 to 5 days**.
-
-| Task | Description | File |
-|------|-------------|------|
-| Task 1 | AI Document Assistant using Retrieval-Augmented Generation | [TASK-01-RAG.md](./TASK-01-RAG.md) |
-| Task 2 | AI Agent with Tool Calling | [TASK-02-AI-AGENT.md](./TASK-02-AI-AGENT.md) |
-| Task 3 | GitHub Repository AI Analyzer + Open-Source Contribution | [TASK-03-GITHUB-ANALYZER.md](./TASK-03-GITHUB-ANALYZER.md) |
-
-Read each task file carefully before beginning.
+| Task | Module Directory | Primary Tech Stack | Key Capabilities | Automated Tests | Deep-Dive Documentation |
+| :--- | :--- | :--- | :--- | :---: | :--- |
+| **Task 1: AI Document Assistant (RAG)** | [`task-01-rag/`](./task-01-rag) | Streamlit, Groq, Gemini, FAISS, PyPDF, Scikit-Learn | • Multi-page PDF parsing with encrypted/scanned file edge-case guards<br>• Recursive character chunking (`chunk_size=1000`, `chunk_overlap=200`)<br>• In-memory FAISS vector store with cosine similarity<br>• Strict anti-hallucination grounding with source citations | **23 / 23 Passed** | [Task 1 README](./task-01-rag/README.md) |
+| **Task 2: Multi-Turn AI Agent** | [`task-02-ai-agent/`](./task-02-ai-agent) | Streamlit, Groq API (`llama-3.3-70b-versatile`, `qwen/qwen3.8-27b`), Requests | • Autonomous multi-turn reasoning with Groq function calling<br>• Safe AST Calculator (zero `eval()`, code execution prevention)<br>• Live Weather via Open-Meteo Geocoding & Forecast APIs<br>• Wikipedia encyclopedic search with reference citations<br>• Collapsible tool execution telemetry expander | **20 / 20 Passed** | [Task 2 README](./task-02-ai-agent/README.md) |
+| **Task 3: GitHub Repository AI Analyzer** | [`task-03-github-analyzer/`](./task-03-github-analyzer) | Streamlit, GitHub REST API v3, Groq API, Pydantic | • Ingests repo metadata, raw README, recursive tree & manifests<br>• Rate-limit resilience with optional Personal Access Token (PAT)<br>• Structured 4-part architectural audit (Executive Summary, Architecture, 3 Recommendations, Good First Issues)<br>• Metric cards, tree viewer, and 1-click Markdown export | **12 / 12 Passed** | [Task 3 README](./task-03-github-analyzer/README.md) |
 
 ---
 
-## Technology
+## 🏛️ High-Level System Architecture
 
-There is no mandatory stack. The suggestions below are based on what works well and what is free to use.
+```mermaid
+flowchart TD
+    subgraph Clients ["Web Client Layer (Streamlit)"]
+        UI1["Task 1: AI Document Assistant\n(task-01-rag/app.py)"]
+        UI2["Task 2: Multi-Turn AI Agent\n(task-02-ai-agent/app.py)"]
+        UI3["Task 3: GitHub Repo Analyzer\n(task-03-github-analyzer/app.py)"]
+    end
 
-- **Language:** Python 3.10+
-- **LLMs:** Google Gemini API (free tier), Groq API (free tier), or locally hosted models via Ollama
-- **Frameworks:** LangChain, LlamaIndex, or plain Python
-- **Vector databases:** FAISS, ChromaDB
-- **UI:** Streamlit, Gradio, or FastAPI
-- **APIs:** GitHub REST API, Open-Meteo, DuckDuckGo Search, Wikipedia API
+    subgraph Engines ["Core Processing & Reasoning Engines"]
+        RAG["RAGEngine & PDFProcessor\n• Hierarchical Recursive Chunking\n• FAISS IndexFlatIP Cosine Search\n• Source Attribution & Citations"]
+        Agent["ToolCallingAgent\n• ReAct Multi-Turn Loop\n• Dynamic Function Calling\n• Intermediate Tool Telemetry"]
+        Analyzer["RepoAnalyzer & GitHubClient\n• REST API Ingestion & Tree Parser\n• Rate-Limit Interception (60 vs 5,000 req/hr)\n• Architectural Audit & Roadmap"]
+    end
 
-None of the tasks require paid APIs or paid hosting. If you choose a service with a free tier, document any rate limits or constraints.
+    subgraph ToolsServices ["External Tools & Upstream APIs"]
+        FAISSStore[("FAISS In-Memory Vector Store\n(Normalized Inner Product)")]
+        GroqAPI["Groq Cloud LLM\n(llama-3.3-70b-versatile / qwen/qwen3.8-27b)"]
+        GeminiAPI["Google Gemini API\n(gemini-2.0-flash / text-embedding-004)"]
+        WeatherAPI["Open-Meteo Weather & Geocoding REST API"]
+        WikiAPI["Wikipedia REST & OpenSearch API"]
+        GitHubAPI["GitHub REST API v3"]
+        ASTCalc["Safe AST Math Evaluator\n(ast.BinOp / Zero eval)"]
+    end
 
----
+    UI1 --> RAG
+    RAG --> FAISSStore
+    RAG --> GroqAPI
+    RAG --> GeminiAPI
 
-## Deployment
+    UI2 --> Agent
+    Agent --> GroqAPI
+    Agent --> WeatherAPI
+    Agent --> WikiAPI
+    Agent --> ASTCalc
 
-Deploy each project on a free hosting platform:
-
-- [Streamlit Community Cloud](https://streamlit.io/cloud)
-- [Hugging Face Spaces](https://huggingface.co/spaces)
-- Any other free platform you prefer
-
-Each deployed app must be accessible via a public URL. If a deployment is temporarily unavailable, document the issue and include clear local setup instructions so the application can be verified locally.
-
-**Do not commit API keys, tokens, or any secrets to your repository.** Use environment variables or the secrets management provided by your hosting platform.
-
----
-
-## AI Tool Policy
-
-You may use AI assistants (ChatGPT, Claude, Gemini, Copilot, Cursor, or others) during this assessment. Use them as development aids — for looking up syntax, drafting initial code, or debugging.
-
-Before submitting:
-
-- Review and test every part of the code yourself.
-- Refactor AI-generated code to fit a coherent structure and style.
-- Write your own documentation that accurately describes what the application does.
-- Remove generic boilerplate, placeholder comments, and anything you do not understand.
-
-Shortlisted candidates will be asked to explain their implementation, make a small modification, or debug a specific part during the interview. If you cannot walk through your own submission, that is a problem.
-
-Please disclose which AI tools you used and how in the submission form.
+    UI3 --> Analyzer
+    Analyzer --> GitHubAPI
+    Analyzer --> GroqAPI
+```
 
 ---
 
-## GitHub Instructions
+## 🚀 Quickstart & Local Installation
 
-1. **Fork this repository** to your personal GitHub account.
-2. Create one repository per task, or organize all three in a single well-structured repository.
-3. Make regular commits with clear, descriptive commit messages throughout development — not one large commit at the end.
-4. Keep all repositories **public** until your evaluation is complete.
+### 1. Clone Repository & Setup Virtual Environment
+```bash
+# Clone the repository
+git clone https://github.com/khrishChauhan/ghanextech-technical-assessment.git
+cd ghanextech-technical-assessment
 
-Do not push directly to this repository.
+# Create Python 3.10+ virtual environment
+python -m venv .venv
+
+# Activate virtual environment
+# Windows (PowerShell):
+.venv\Scripts\Activate.ps1
+# Linux / macOS:
+source .venv/bin/activate
+
+# Install consolidated dependencies for all tasks
+pip install -r requirements.txt
+```
+
+### 2. Configure Environment Variables
+Copy `.env.example` in any task directory or define environment variables globally:
+
+```env
+# Groq Cloud API Key (obtain from https://console.groq.com/keys)
+GROQ_API_KEY=gsk_your_groq_api_key_here
+
+# (Optional) Google Gemini API Key (obtain from https://aistudio.google.com/)
+GEMINI_API_KEY=AIzaSy_your_gemini_api_key_here
+
+# (Optional) GitHub Personal Access Token for Task 3 (increases limit from 60 to 5,000 req/hr)
+GITHUB_TOKEN=ghp_your_github_token_here
+```
 
 ---
 
-## Submission
+## 💻 Running the Applications
 
-Fill out the submission template in [SUBMISSION.md](./SUBMISSION.md) and send it as instructed by the recruitment team.
+Each task runs independently via Streamlit:
 
-Submissions with broken links, inaccessible repositories, or incomplete sections may not be considered for further evaluation.
+### Run Task 1: AI Document Assistant (RAG)
+```bash
+streamlit run task-01-rag/app.py
+```
+*Upload PDFs, ask questions, receive answers grounded in context with exact source citations.*
+
+### Run Task 2: Multi-Turn AI Agent with Dynamic Tool Calling
+```bash
+streamlit run task-02-ai-agent/app.py
+```
+*Engage with an autonomous agent capable of live weather forecasting, safe math calculation, and Wikipedia search with real-time tool telemetry.*
+
+### Run Task 3: GitHub Repository AI Analyzer
+```bash
+streamlit run task-03-github-analyzer/app.py
+```
+*Input any GitHub repository URL (`psf/requests`, `pallets/flask`) to generate a complete architectural audit and open-source contribution roadmap.*
 
 ---
 
-## Questions
+## 🧪 Automated Test Suite (55 / 55 Passed)
 
-If something in the assessment is unclear, raise a GitHub issue in this repository or contact the team through the official recruitment channel.
+Run all tests across all three tasks simultaneously:
 
-Good luck.
+```bash
+pytest task-01-rag/tests task-02-ai-agent/tests task-03-github-analyzer/tests -v
+```
+
+### Test Breakdown:
+- **Task 1 (`task-01-rag/tests/`):** 23 tests passing
+  - Multi-page PDF text extraction, scanned PDF detection, encrypted PDF alerts, corrupt stream resilience.
+  - Recursive text chunker parameter validation (`chunk_size=1000`, `chunk_overlap=200`).
+  - FAISS `IndexFlatIP` vector store addition, cosine similarity search, and clean index reset.
+  - Strict anti-hallucination prompt refusal phrase validation.
+- **Task 2 (`task-02-ai-agent/tests/`):** 20 tests passing
+  - Safe AST calculator arithmetic, precedence, division-by-zero protection, and security injection blocks (`__import__`, `eval()`, function calls).
+  - Open-Meteo live weather valid city, empty city, and unknown city handling.
+  - Wikipedia search valid lookup and nonexistent article graceful recovery.
+  - Agent multi-turn reasoning loop, tool execution trace capture, and error recovery.
+- **Task 3 (`task-03-github-analyzer/tests/`):** 12 tests passing
+  - GitHub URL parsing (full URLs, `.git` suffixes, SSH syntax, shorthands, and invalid domain rejection).
+  - Mocked repository metadata, raw README, and recursive tree ingestion.
+  - Rate-limit error handling (HTTP 403 / remaining == 0) with UTC reset formatting.
+  - Analyzer prompt formatting, structured section verification, and automated model fallback.
+
+---
+
+## 🛡️ Production Engineering & Security Practices
+
+- **Zero-Code-Execution AST Calculator:** Complete rejection of Python's dangerous `eval()` or `exec()`. Mathematical evaluation strictly traverses an Abstract Syntax Tree (`ast.BinOp`, `ast.UnaryOp`, `ast.Constant`), intercepting code injection, attribute lookups, and division by zero.
+- **Strict Grounding Guardrails:** The RAG pipeline instructs LLMs to rely solely on retrieved passages. If an answer cannot be grounded in the context, it outputs: *"The provided document(s) do not contain information regarding this question."*
+- **Vector Store Isolation Lifecycle:** `clear_index()` cleanses both vector stores and in-memory metadata registries on new uploads, preventing cross-document vector leakage.
+- **Zero-Downtime Model Fallbacks:** Built-in model routing between `llama-3.3-70b-versatile`, `qwen/qwen3.8-27b`, and `openai/gpt-oss-120b` ensures uninterrupted functionality regardless of specific API tier allocations.
+- **Safe Secrets Handling:** API keys are never committed to git history (`.gitignore` enforces `.env` isolation). Keys can be provided via environment variables, `.env` files, or the interactive Streamlit sidebar.
+
+---
+
+## 📄 Submission Details
+
+Complete submission responses, AI collaboration disclosures, and open-source contribution guidelines are documented in:
+👉 **[`SUBMISSION.md`](./SUBMISSION.md)**
+
+---
+
+## 📜 License
+
+This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
